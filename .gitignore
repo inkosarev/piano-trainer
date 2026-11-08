@@ -1,0 +1,4 @@
+# артефакты проверок и временные файлы
+.playwright-mcp/
+*.png.tmp
+node_modules/

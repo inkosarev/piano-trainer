@@ -1,0 +1,1548 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0e1116">
+<title>Тренажёр чтения нот</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎹</text></svg>">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<!-- VexFlow — локальная копия, работает офлайн и с file:// -->
+<script src="vendor/vexflow.js"></script>
+<style>
+  :root {
+    --bg: #0e1116;
+    --card: #161b24;
+    --card-2: #1b2230;
+    --line: #2a3345;
+    --text: #e6e9ef;
+    --muted: #8b95a7;
+    --good: #34d399;
+    --bad: #f87171;
+    --accent: #7aa2f7;
+    --key-white: #dfe3ea;
+    --key-black: #10141b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    line-height: 1.4;
+    -webkit-tap-highlight-color: transparent;
+  }
+  main, header {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 20px;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding-top: 22px;
+    padding-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  h1 { font-size: 22px; font-weight: 600; margin: 0; letter-spacing: 0.2px; }
+  h1 small { color: var(--muted); font-weight: 400; font-size: 14px; margin-left: 10px; }
+
+  /* MIDI-статус */
+  .midi { display: flex; align-items: center; gap: 8px; }
+  .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #555; flex: none;
+  }
+  .dot.ok { background: var(--good); box-shadow: 0 0 8px var(--good); }
+  .dot.warn { background: #fbbf24; }
+  .dot.err { background: var(--bad); }
+  /* Видимый текст статуса MIDI — title-подсказки на тач-экранах не видны */
+  .midi-status { font-size: 13px; color: var(--muted); }
+  #midiSelect {
+    background: var(--card-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 6px 10px; font-size: 16px; max-width: 260px;
+  }
+
+  /* Карточка с нотоносцем */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+  }
+  .stage {
+    position: relative;
+    min-height: 300px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 18px 16px 8px;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .stage.good { border-color: var(--good); box-shadow: 0 0 24px rgba(52, 211, 153, 0.25); }
+  .stage.bad  { border-color: var(--bad);  box-shadow: 0 0 24px rgba(248, 113, 113, 0.22); animation: shake 0.3s; }
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-6px); }
+    75% { transform: translateX(6px); }
+  }
+  #staffHost { width: min(340px, 80vw); }
+  #staffHost svg { width: 100%; height: auto; display: block; }
+  /* Название ноты — прижато к нижнему краю карточки (absolute), чтобы
+     нотоносец центрировался в карточке точно, а не «группой» с подписью */
+  .note-info {
+    position: absolute; left: 16px; right: 16px; bottom: 8px;
+    text-align: center;
+  }
+  .note-name { font-size: 30px; font-weight: 600; letter-spacing: 0.5px; }
+  .note-name.hidden { visibility: hidden; }
+  .note-sub { color: var(--muted); font-size: 14px; margin-top: 2px; }
+  /* Подсказка простоя — у верхнего края, чтобы не ложиться на стан */
+  .idle-overlay {
+    position: absolute; inset: 0;
+    display: flex; align-items: flex-start; justify-content: center;
+    padding-top: 16px;
+    background: rgba(14, 17, 22, 0.72);
+    border-radius: 14px;
+    color: var(--muted); font-size: 17px;
+  }
+  .idle-overlay.hidden { display: none; }
+
+  /* Переключатель режима Ноты/Аккорды */
+  .mode-switch {
+    display: inline-flex;
+    margin: 0 auto 14px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+    width: max-content;
+  }
+  .mode-btn {
+    border: none;
+    background: var(--card-2);
+    color: var(--muted);
+    padding: 8px 26px;
+    font-size: 15px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .mode-btn.active {
+    background: var(--accent);
+    color: #0d1220;
+    font-weight: 600;
+  }
+  .mode-row { text-align: center; }
+  .settings fieldset.chords-only { display: none; }
+  .settings.chord-mode fieldset.chords-only { display: block; }
+
+  /* Кнопки */
+  .controls {
+    display: flex; gap: 8px; justify-content: center;
+    margin: 10px 0;
+    flex-wrap: wrap;
+  }
+  .btn {
+    border: 1px solid var(--line);
+    background: var(--card-2);
+    color: var(--text);
+    padding: 10px 22px;
+    border-radius: 10px;
+    font-size: 15px;
+    cursor: pointer;
+    transition: filter 0.12s, transform 0.05s;
+  }
+  .btn:hover { filter: brightness(1.15); }
+  .btn:active { transform: scale(0.98); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #0d1220; font-weight: 600; }
+  .btn.primary.stop { background: var(--bad); border-color: var(--bad); color: #1c0d0d; }
+  .btn:disabled { opacity: 0.45; cursor: default; }
+  /* На тач-экранах: без задержки двойного тапа и подсветки tapped-элемента */
+  .btn, .mode-btn, .settings label, .settings summary, select {
+    touch-action: manipulation;
+  }
+
+  /* Статистика */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .tile {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 10px 12px;
+    text-align: center;
+  }
+  .tile-v { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tile-v.good { color: var(--good); }
+  .tile-v.bad { color: var(--bad); }
+  .tile-l { color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+  /* Виртуальная клавиатура */
+  .kb-card { padding: 14px; margin-bottom: 16px; overflow-x: auto; }
+  .kb {
+    position: relative;
+    height: 118px;
+    user-select: none;
+    /* Ширина подстраивается под число белых клавиш (--whites ставит
+       buildKeyboard): клавиша не уже 26px и не шире 64px, по центру.
+       Шире карточки — карточка панамируется горизонтально. */
+    --whites: 29;
+    width: max(calc(var(--whites) * 26px), min(100%, calc(var(--whites) * 64px)));
+    margin: 0 auto;
+    /* Тапы и удержания по клавишам (Pointer Events); горизонтальное
+       панорамирование полосы клавиатуры оставляем браузеру */
+    touch-action: pan-x;
+  }
+  .kb .key { cursor: pointer; }
+  .kb .w {
+    position: absolute; top: 0; bottom: 0;
+    background: var(--key-white);
+    border: 1px solid #97a0b1;
+    border-radius: 0 0 5px 5px;
+    z-index: 1;
+  }
+  .kb .w span {
+    position: absolute; bottom: 5px; left: 0; right: 0;
+    text-align: center; font-size: 10px; color: #5b6575;
+  }
+  .kb .b {
+    position: absolute; top: 0;
+    height: 64%;
+    background: var(--key-black);
+    border: 1px solid #333c4d;
+    border-radius: 0 0 4px 4px;
+    z-index: 2;
+  }
+  .kb .w.on { background: #b9c3d4; }
+  .kb .b.on { background: #2b334a; filter: brightness(1.6); }
+  .kb .w.correct { background: var(--good); }
+  .kb .b.correct { background: #1d7a5c; box-shadow: 0 0 10px var(--good); }
+  .kb .w.wrong { background: var(--bad); }
+  .kb .b.wrong { background: #8f3232; box-shadow: 0 0 10px var(--bad); }
+  .kb .hint { animation: pulse 0.9s infinite; }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(122, 162, 247, 0); }
+    50% { box-shadow: 0 0 14px 3px rgba(122, 162, 247, 0.8); }
+  }
+
+  /* Настройки */
+  .settings { padding: 4px 18px 16px; margin-bottom: 30px; }
+  .settings summary {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 44px;
+    cursor: pointer; font-size: 15px; color: var(--muted);
+    user-select: none; list-style: none;
+  }
+  .settings summary::-webkit-details-marker { display: none; }
+  .settings summary::after { content: '▾'; margin-left: 8px; font-size: 12px; }
+  .settings[open] summary::after { content: '▴'; }
+  .settings-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 14px 22px;
+    padding-top: 6px;
+  }
+  .settings fieldset {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 14px 12px;
+    margin: 0;
+  }
+  .settings legend { color: var(--muted); font-size: 13px; padding: 0 6px; }
+  .settings label {
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 0; font-size: 14px; cursor: pointer;
+  }
+  .settings input[type='radio'], .settings input[type='checkbox'] { accent-color: var(--accent); }
+  .settings select {
+    background: var(--card-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 5px 8px; font-size: 16px; width: 100%;
+  }
+  .settings-actions { padding: 10px 0 4px; }
+  .settings-actions .btn { padding: 8px 16px; font-size: 14px; }
+  footer {
+    text-align: center; color: var(--muted); font-size: 12px;
+    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Телефон */
+  @media (max-width: 640px) {
+    main, header { padding: 0 12px; }
+    /* Компактная шапка: заголовок + кнопка экрана в одну строку, ниже —
+       MIDI-статус, ещё ниже (пока приложение не установлено) — установка */
+    header { padding-top: 12px; padding-bottom: 12px; gap: 8px; }
+    h1 { font-size: 17px; flex: 1 1 auto; min-width: 0; }
+    h1 small { display: none; }
+    #fsBtn { order: 1; flex: none; padding: 8px 12px; font-size: 13px; }
+    .midi { order: 2; flex-basis: 100%; flex-wrap: wrap; gap: 6px 8px; justify-content: flex-start; }
+    .midi-status { flex: 1 1 120px; min-width: 0; }
+    #midiSelect { flex-basis: 100%; max-width: none; width: 100%; }
+    #installBtn { order: 3; flex: 1 1 100%; padding: 10px 12px; font-size: 14px; }
+    /* Меньше пустого места: компактный стан и отступы между блоками */
+    .mode-switch { margin-bottom: 10px; }
+    .stage { min-height: 240px; padding: 14px 12px 10px; }
+    #staffHost { width: min(360px, 90vw); }
+    .note-name { font-size: 24px; }
+    .kb-card { padding: 10px; margin-bottom: 10px; }
+    /* Статистика: ровные полные ряды — 4 плитки, затем 3 пошире,
+       оба ряда занимают всю ширину без рваного края */
+    .stats { grid-template-columns: repeat(12, 1fr); gap: 6px; margin-bottom: 10px; }
+    .stats .tile { grid-column: span 3; }
+    .stats .tile:nth-child(n + 5) { grid-column: span 4; }
+    .tile { padding: 6px 4px; }
+    .tile-v { font-size: 16px; }
+    .tile-l { font-size: 10px; }
+    .btn { padding: 12px 20px; font-size: 16px; }
+    .kb { height: 108px; }
+    .kb .w span { font-size: 11px; }
+    .settings-grid { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+  }
+
+  /* Ландшафт телефона — основная ориентация: две колонки.
+     Слева крупный нотоносец по центру карточки, справа — режим, кнопки
+     и клавиатура; статистика — одной строкой во всю ширину под ними. */
+  @media (orientation: landscape) and (max-height: 520px) {
+    header { padding-top: 6px; padding-bottom: 6px; gap: 12px; }
+    h1 { font-size: 15px; }
+    h1 small { display: none; }
+    .midi { min-width: 0; }
+    .midi-status {
+      font-size: 12px; min-width: 0;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    #midiSelect { max-width: 150px; }
+
+    main {
+      display: grid;
+      grid-template-columns: minmax(0, 57%) minmax(0, 1fr);
+      gap: 8px 10px;
+    }
+    .stage { grid-column: 1; grid-row: 1 / span 3; min-height: 0; padding: 8px 12px; }
+    .mode-row { grid-column: 2; grid-row: 1; align-self: center; }
+    .mode-switch { margin: 0 auto; }
+    .mode-btn { padding: 6px 18px; font-size: 14px; }
+    .controls { grid-column: 2; grid-row: 2; margin: 0; align-self: center; }
+    .btn { padding: 8px 16px; font-size: 14px; }
+    .kb-card {
+      grid-column: 2; grid-row: 3; margin: 0; padding: 8px 10px;
+      display: flex; flex-direction: column; justify-content: center;
+    }
+    .kb { height: min(110px, 27vh); height: min(110px, 27dvh); }
+    /* vh-строка — фолбэк для браузеров без dvh */
+    #staffHost { width: min(360px, 70vh); width: min(360px, 70dvh); }
+    .note-name { font-size: 24px; }
+
+    /* Статистика — строго одна строка */
+    .stats {
+      grid-column: 1 / -1; grid-row: 4; margin: 0;
+      grid-template-columns: repeat(7, 1fr); gap: 4px;
+    }
+    .tile { padding: 4px 6px; }
+    .tile-v { font-size: 15px; }
+    .tile-l { font-size: 10px; }
+    .settings { grid-column: 1 / -1; grid-row: 5; margin-bottom: 16px; }
+    footer { grid-column: 1 / -1; padding-bottom: 10px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Тренажёр чтения нот <small>MIDI-пианино</small></h1>
+  <div class="midi">
+    <span id="midiDot" class="dot err" title="Статус MIDI"></span>
+    <span id="midiStatus" class="midi-status">проверка MIDI…</span>
+    <select id="midiSelect" title="MIDI-вход">
+      <option>MIDI не подключён</option>
+    </select>
+  </div>
+  <button id="fsBtn" class="btn" hidden>Во весь экран</button>
+  <button id="installBtn" class="btn" hidden>Установить приложение</button>
+</header>
+
+<main>
+  <!-- Переключатель режима -->
+  <div class="mode-row">
+    <div class="mode-switch" id="modeSwitch">
+      <button type="button" class="mode-btn active" data-mode="notes">Ноты</button>
+      <button type="button" class="mode-btn" data-mode="chords">Аккорды</button>
+    </div>
+  </div>
+
+  <!-- Нотоносец -->
+  <section class="stage card" id="stage">
+    <div id="staffHost"></div>
+    <div class="note-info">
+      <div id="noteName" class="note-name hidden">—</div>
+      <div id="noteSub" class="note-sub"></div>
+    </div>
+    <div id="idleOverlay" class="idle-overlay">Нажмите «Начать»</div>
+  </section>
+
+  <!-- Управление -->
+  <section class="controls">
+    <button id="startBtn" class="btn primary">Начать</button>
+    <button id="hintBtn" class="btn" disabled>Подсказка</button>
+  </section>
+
+  <!-- Виртуальная клавиатура — сразу под нотами -->
+  <section class="card kb-card">
+    <div id="keyboard" class="kb"></div>
+  </section>
+
+  <!-- Статистика -->
+  <section class="stats">
+    <div class="tile"><div class="tile-v good" id="statCorrect">0</div><div class="tile-l">Верно</div></div>
+    <div class="tile"><div class="tile-v bad" id="statWrong">0</div><div class="tile-l">Ошибки</div></div>
+    <div class="tile"><div class="tile-v" id="statAccuracy">—</div><div class="tile-l">Точность</div></div>
+    <div class="tile"><div class="tile-v" id="statStreak">0</div><div class="tile-l">Серия</div></div>
+    <div class="tile"><div class="tile-v" id="statBest">0</div><div class="tile-l">Рекорд серии</div></div>
+    <div class="tile"><div class="tile-v" id="statReaction">—</div><div class="tile-l">Реакция</div></div>
+    <div class="tile"><div class="tile-v" id="statTime">0:00</div><div class="tile-l">Время</div></div>
+  </section>
+
+  <!-- Настройки -->
+  <details class="settings card" id="settings">
+    <summary>Настройки</summary>
+    <div class="settings-grid">
+      <fieldset>
+        <legend>Ключ</legend>
+        <label><input type="radio" name="clefMode" value="treble"> Скрипический</label>
+        <label><input type="radio" name="clefMode" value="bass"> Басовый</label>
+        <label><input type="radio" name="clefMode" value="both"> Оба (случайно)</label>
+      </fieldset>
+      <fieldset>
+        <legend>Диапазон (ноты и аккорды)</legend>
+        <label><input type="radio" name="rangePreset" value="staff"> В пределах линееек</label>
+        <label><input type="radio" name="rangePreset" value="ledger"> С добавочными линейками</label>
+        <label><input type="radio" name="rangePreset" value="wide"> Широкий</label>
+      </fieldset>
+      <fieldset class="chords-only">
+        <legend>Тональность</legend>
+        <label>Тональность
+          <select id="keySig"></select>
+        </label>
+      </fieldset>
+      <fieldset class="chords-only">
+        <legend>Аккорды</legend>
+        <label><input type="checkbox" id="inversions"> С обращениями</label>
+        <label><input type="checkbox" data-degree="tonic"> Тоника (I)</label>
+        <label><input type="checkbox" data-degree="subdominant"> Субдоминанта (IV)</label>
+        <label><input type="checkbox" data-degree="dominant"> Доминанта (V)</label>
+        <label>Зачёт блоком — все три ноты зажаты одновременно</label>
+      </fieldset>
+      <fieldset>
+        <legend>Ноты</legend>
+        <label><input type="checkbox" id="blackKeys"> Чёрные клавиши (диезы)</label>
+        <label>Показывать название
+          <select id="showName">
+            <option value="never">никогда</option>
+            <option value="on-error">после ошибки</option>
+            <option value="always">всегда</option>
+          </select>
+        </label>
+      </fieldset>
+      <fieldset>
+        <legend>Звук</legend>
+        <label><input type="checkbox" id="soundOn"> Слышать ноты через устройство</label>
+      </fieldset>
+    </div>
+    <div class="settings-actions">
+      <button id="resetBtn" class="btn">Сброс статистики</button>
+    </div>
+  </details>
+
+  <footer>Компьютер: Chrome / Edge / Яндекс.Браузер, пианино по USB. Телефон (Chrome на Android, в iOS Safari нет Web MIDI): один раз установите приложение с компьютера — node phone.mjs, см. README, — дальше пианино подключается прямо к телефону и приложение работает офлайн. Без MIDI можно играть по экранным клавишам.</footer>
+</main>
+
+<script>
+'use strict';
+/* ============================================================
+ * Тренажёр чтения нот: нотоносец → нажатие на MIDI-клавиатуре.
+ * Одностраничное приложение без сборки, работает с file://.
+ * ============================================================ */
+
+var VF = Vex.Flow;
+
+/* ---------- Ноты и октавы ---------- */
+
+// Латинские имена по midi % 12
+var LETTERS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+// Сольфеджио по midi % 12
+var SOLFEGE = ['До', 'До♯', 'Ре', 'Ре♯', 'Ми', 'Фа', 'Фа♯', 'Соль', 'Соль♯', 'Ля', 'Ля♯', 'Си'];
+var BLACK = { 1: true, 3: true, 6: true, 8: true, 10: true };
+// Русские названия октав по номеру научной нотации (C4 = «первая»)
+var OCTAVE_RU = {
+  0: 'субконтроктава', 1: 'контроктава', 2: 'большая', 3: 'малая',
+  4: 'первая', 5: 'вторая', 6: 'третья', 7: 'четвёртая'
+};
+
+// Диапазоны [низ, верх] по ключу и пресету
+var RANGES = {
+  treble: { staff: [64, 77], ledger: [60, 81], wide: [57, 96] },
+  bass:   { staff: [43, 57], ledger: [40, 60], wide: [36, 64] }
+};
+
+// Диапазон виртуальной клавиатуры: не фиксированные четыре октавы, а то,
+// что нужно текущей тренировке, — клавиши остаются крупными даже на телефоне.
+function keyboardRange() {
+  var clefs = settings.clefMode === 'both' ? ['treble', 'bass'] : [settings.clefMode];
+  var lo = Infinity, hi = -Infinity;
+  clefs.forEach(function (c) {
+    var r = RANGES[c][settings.rangePreset];
+    lo = Math.min(lo, r[0]);
+    hi = Math.max(hi, r[1]);
+  });
+  if (settings.mode === 'chords') {
+    // страховка generateChordTarget при узком окне строит аккорд от 48 + rootPc
+    lo = Math.min(lo, 48);
+    hi = Math.max(hi, 66);
+  }
+  var t = state.target;
+  if (t) {
+    // смена настроек во время «залоченного» вопроса: цель может быть вне
+    // нового диапазона — клавиши под неё обязаны остаться
+    var midis = t.kind === 'chord' ? t.notes : [t.midi];
+    midis.forEach(function (m) { lo = Math.min(lo, m); hi = Math.max(hi, m); });
+  }
+  return [lo, hi];
+}
+
+/* ---------- Тональности и трезвучия ---------- */
+
+// Натуральные полутоны букв
+var NATURAL_PC = { c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11 };
+var LETTER_ORDER = ['c', 'd', 'e', 'f', 'g', 'a', 'b'];
+var ACC_VALUE = { '': 0, '#': 1, '##': 2, b: -1, bb: -2 };
+var ACC_RU = { '': '', '#': '-диез', '##': '-дубль-диез', b: '-бемоль', bb: '-дубль-бемоль' };
+var LETTER_RU = { c: 'До', d: 'Ре', e: 'Ми', f: 'Фа', g: 'Соль', a: 'Ля', b: 'Си' };
+
+// Гаммы тональностей по буквам (для правильной орфографии аккордов)
+var KEYS = {
+  // мажорные
+  'C':  { type: 'major', name: 'До-мажор', degrees: ['c', 'd', 'e', 'f', 'g', 'a', 'b'] },
+  'G':  { type: 'major', name: 'Соль-мажор', degrees: ['g', 'a', 'b', 'c', 'd', 'e', 'f#'] },
+  'D':  { type: 'major', name: 'Ре-мажор', degrees: ['d', 'e', 'f#', 'g', 'a', 'b', 'c#'] },
+  'A':  { type: 'major', name: 'Ля-мажор', degrees: ['a', 'b', 'c#', 'd', 'e', 'f#', 'g#'] },
+  'E':  { type: 'major', name: 'Ми-мажор', degrees: ['e', 'f#', 'g#', 'a', 'b', 'c#', 'd#'] },
+  'B':  { type: 'major', name: 'Си-мажор', degrees: ['b', 'c#', 'd#', 'e', 'f#', 'g#', 'a#'] },
+  'F#': { type: 'major', name: 'Фа-диез мажор', degrees: ['f#', 'g#', 'a#', 'b', 'c#', 'd#', 'e#'] },
+  'C#': { type: 'major', name: 'До-диез мажор', degrees: ['c#', 'd#', 'e#', 'f#', 'g#', 'a#', 'b#'] },
+  'F':  { type: 'major', name: 'Фа-мажор', degrees: ['f', 'g', 'a', 'bb', 'c', 'd', 'e'] },
+  'Bb': { type: 'major', name: 'Си-бемоль мажор', degrees: ['bb', 'c', 'd', 'eb', 'f', 'g', 'a'] },
+  'Eb': { type: 'major', name: 'Ми-бемоль мажор', degrees: ['eb', 'f', 'g', 'ab', 'bb', 'c', 'd'] },
+  'Ab': { type: 'major', name: 'Ля-бемоль мажор', degrees: ['ab', 'bb', 'c', 'db', 'eb', 'f', 'g'] },
+  'Db': { type: 'major', name: 'Ре-бемоль мажор', degrees: ['db', 'eb', 'f', 'gb', 'ab', 'bb', 'c'] },
+  // минорные (натуральный лад; доминанта строится мажорной — гармонический минор)
+  'Am': { type: 'minor', name: 'ля-минор', degrees: ['a', 'b', 'c', 'd', 'e', 'f', 'g'] },
+  'Em': { type: 'minor', name: 'ми-минор', degrees: ['e', 'f#', 'g', 'a', 'b', 'c', 'd'] },
+  'Bm': { type: 'minor', name: 'си-минор', degrees: ['b', 'c#', 'd', 'e', 'f#', 'g', 'a'] },
+  'F#m': { type: 'minor', name: 'фа-диез минор', degrees: ['f#', 'g#', 'a', 'b', 'c#', 'd', 'e'] },
+  'C#m': { type: 'minor', name: 'до-диез минор', degrees: ['c#', 'd#', 'e', 'f#', 'g#', 'a', 'b'] },
+  'G#m': { type: 'minor', name: 'соль-диез минор', degrees: ['g#', 'a#', 'b', 'c#', 'd#', 'e', 'f#'] },
+  'D#m': { type: 'minor', name: 'ре-диез минор', degrees: ['d#', 'e#', 'f#', 'g#', 'a#', 'b', 'c#'] },
+  'A#m': { type: 'minor', name: 'ля-диез минор', degrees: ['a#', 'b#', 'c#', 'd#', 'e#', 'f#', 'g#'] },
+  'Dm': { type: 'minor', name: 'ре-минор', degrees: ['d', 'e', 'f', 'g', 'a', 'bb', 'c'] },
+  'Gm': { type: 'minor', name: 'соль-минор', degrees: ['g', 'a', 'bb', 'c', 'd', 'eb', 'f'] },
+  'Cm': { type: 'minor', name: 'до-минор', degrees: ['c', 'd', 'eb', 'f', 'g', 'ab', 'bb'] },
+  'Fm': { type: 'minor', name: 'фа-минор', degrees: ['f', 'g', 'ab', 'bb', 'c', 'db', 'eb'] },
+  'Bbm': { type: 'minor', name: 'си-бемоль минор', degrees: ['bb', 'c', 'db', 'eb', 'f', 'gb', 'ab'] },
+  'Ebm': { type: 'minor', name: 'ми-бемоль минор', degrees: ['eb', 'f', 'gb', 'ab', 'bb', 'c', 'db'] }
+};
+
+// Разбор записанной буквы ('eb' → { letter: 'e', acc: 'b' })
+function parseSpelled(spelled) {
+  return { letter: spelled[0], acc: spelled.slice(1) };
+}
+// Полутон записанной буквы относительно до
+function spelledPc(spelled) {
+  var p = parseSpelled(spelled);
+  return (NATURAL_PC[p.letter] + ACC_VALUE[p.acc] + 120) % 12;
+}
+// Альтерация, приводящая букву letter к нужному полутону neededPc
+function accidentalFor(letter, neededPc) {
+  var delta = (neededPc - NATURAL_PC[letter] + 120) % 12;
+  if (delta > 6) delta -= 12;
+  if (delta === 0) return '';
+  if (delta === 1) return '#';
+  if (delta === 2) return '##';
+  if (delta === -1) return 'b';
+  if (delta === -2) return 'bb';
+  return delta > 0 ? '##' : 'bb';
+}
+
+// Трезвучие от записанной буквы: буквы двух соседних ступеней + альтерации по качеству
+// quality: 'major' [0,4,7] или 'minor' [0,3,7]
+function buildTriadLetters(rootSpelled, quality) {
+  var root = parseSpelled(rootSpelled);
+  var rootPc = spelledPc(rootSpelled);
+  var thirdSemi = quality === 'major' ? 4 : 3;
+  var rootIdx = LETTER_ORDER.indexOf(root.letter);
+  var thirdLetter = LETTER_ORDER[(rootIdx + 2) % 7];
+  var fifthLetter = LETTER_ORDER[(rootIdx + 4) % 7];
+  return [
+    rootSpelled,
+    thirdLetter + accidentalFor(thirdLetter, (rootPc + thirdSemi) % 12),
+    fifthLetter + accidentalFor(fifthLetter, (rootPc + 7) % 12)
+  ];
+}
+
+// Русское имя аккорда ('g' + major → «Соль-мажор», 'a' + minor → «ля-минор»)
+function chordNameRu(rootSpelled, quality) {
+  var p = parseSpelled(rootSpelled);
+  var base = LETTER_RU[p.letter] + ACC_RU[p.acc];
+  if (quality === 'major') return base[0].toUpperCase() + base.slice(1) + '-мажор';
+  return base[0].toLowerCase() + base.slice(1) + '-минор';
+}
+
+var INVERSION_RU = ['основное положение', '1-е обращение (секстаккорд)', '2-е обращение (квартсекстаккорд)'];
+
+function isBlack(midi) { return !!BLACK[midi % 12]; }
+// Диатоническая ступень (C=0…B=6 в каждой октаве) — для расчёта вертикали ноты
+var WHITE_STEP = [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6];
+function diatonicIndex(midi) {
+  return Math.floor(midi / 12) * 7 + WHITE_STEP[midi % 12];
+}
+function octaveOf(midi) { return Math.floor(midi / 12) - 1; }
+function keyForVex(midi) { return LETTERS[midi % 12].toLowerCase() + '/' + octaveOf(midi); }
+function noteRu(midi) { return SOLFEGE[midi % 12]; }
+function noteLatin(midi) { return LETTERS[midi % 12] + octaveOf(midi); }
+
+/* ---------- Состояние ---------- */
+
+var DEFAULTS = {
+  clefMode: 'treble', rangePreset: 'staff', blackKeys: false,
+  showName: 'on-error', soundOn: false,
+  mode: 'notes', keySig: 'C', inversions: false,
+  degrees: { tonic: true, subdominant: true, dominant: true }
+};
+
+// Функции аккордов: имя настройки → индекс ступени в гамме тональности
+var DEGREE_INDEX = { tonic: 0, subdominant: 3, dominant: 4 };
+
+var settings = loadSettings();
+var state = {
+  running: false,
+  locked: false,        // блокировка на время анимации верной ноты
+  target: null,         // { midi, clef }
+  shownAt: 0,           // performance.now() показа ноты
+  attempts: 0,          // ошибок на текущей ноте
+  sessionStart: 0,
+  stats: { correct: 0, wrong: 0, streak: 0, reactionSum: 0, reactionCount: 0 }
+};
+var bestStreak = loadBest();
+
+var midiAccess = null;
+var selectedInput = null;
+var audioCtx = null;
+var wakeLock = null;
+
+var $ = function (id) { return document.getElementById(id); };
+
+/* ---------- Хранилище ---------- */
+
+function loadSettings() {
+  try {
+    var saved = JSON.parse(localStorage.getItem('pt.settings') || '{}');
+    var merged = {};
+    for (var k in DEFAULTS) merged[k] = saved[k] !== undefined ? saved[k] : DEFAULTS[k];
+    return merged;
+  } catch (e) { return Object.assign({}, DEFAULTS); }
+}
+function saveSettings() {
+  try { localStorage.setItem('pt.settings', JSON.stringify(settings)); } catch (e) {}
+}
+function loadBest() {
+  try {
+    var v = parseInt(localStorage.getItem('pt.best') || '0', 10);
+    return isFinite(v) ? v : 0;
+  } catch (e) { return 0; }
+}
+function saveBest() {
+  try { localStorage.setItem('pt.best', String(bestStreak)); } catch (e) {}
+}
+
+/* ---------- Отрисовка нотоносца ---------- */
+
+// Рисует текущую цель (ноту или аккорд); color — подсветка верного ответа
+function renderTarget(color) {
+  var host = $('staffHost');
+  host.innerHTML = '';
+  var renderer = new VF.Renderer(host, VF.Renderer.Backends.SVG);
+  // Бокс фиксированный (без дёрганья между нотами), а вот вертикаль стана
+  // внутри него подбирается под содержимое — см. ниже. Было 260×250
+  // со станом на y=105 — половина картинки была пустой.
+  var W = 260, H = 190;
+  renderer.resize(W, H);
+  var svg = host.querySelector('svg');
+  // VexFlow вешает inline width/height — снимаем, иначе CSS (#staffHost svg
+  // { width: 100% }) не масштабирует картинку под карточку, и стан рисуется
+  // в натуральную величину независимо от ширины контейнера
+  svg.removeAttribute('style');
+  svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+  var ctx = renderer.getContext();
+  // Светлая нотация по умолчанию — тёмный фон страницы
+  ctx.setFillStyle('#dfe3ea');
+  ctx.setStrokeStyle('#dfe3ea');
+  var t = state.target;
+  var clef = t ? t.clef : 'treble';
+  // Вертикаль стана подбирается под содержимое (стан + ноты): в простое
+  // и для нот в пределах линеек стан стоит ровно по центру бокса,
+  // с добавочными линейками — сдвигается ровно настолько, насколько нужно.
+  // ВАЖНО: VexFlow рисует 5 линеек на y+40…y+80 от переданного y —
+  // компенсируем этот сдвиг (из-за него стан висел у нижнего края).
+  var bottomLineMidi = clef === 'treble' ? 64 : 43; // нижняя линейка: E4 / G2
+  var baseD = diatonicIndex(bottomLineMidi);
+  var noteMidis = t ? (t.kind === 'chord' ? t.notes : [t.midi]) : [];
+  var spanMin = 0, spanMax = 40; // сам стан относительно его верхней линейки
+  noteMidis.forEach(function (m) {
+    var rel = 40 - (diatonicIndex(m) - baseD) * 5;
+    spanMin = Math.min(spanMin, rel - 12);
+    spanMax = Math.max(spanMax, rel + 12);
+  });
+  var staveY = Math.round(H / 2 - 40 - (spanMin + spanMax) / 2);
+  staveY = Math.max(20, Math.min(60, staveY));
+  var stave = new VF.Stave(30, staveY, 170);
+  stave.addClef(clef);
+  stave.setContext(ctx).draw();
+  if (!t) return;
+
+  // Собираем ключи VexFlow и альтерации: одна нота или три ноты аккорда
+  var keys = [];
+  var accs = [];
+  if (t.kind === 'note') {
+    keys.push(keyForVex(t.midi));
+    accs.push(isBlack(t.midi) ? '#' : '');
+  } else {
+    t.spelled.forEach(function (s) {
+      keys.push(s.letter + '/' + s.octave);
+      accs.push(s.acc);
+    });
+  }
+  var note = new VF.StaveNote({ keys: keys, duration: 'q', clef: clef });
+  accs.forEach(function (acc, i) {
+    if (acc) note.addModifier(new VF.Accidental(acc), i);
+  });
+  var noteColor = color || '#dfe3ea';
+  note.setStyle({ fillStyle: noteColor, strokeStyle: noteColor });
+  VF.Formatter.FormatAndDraw(ctx, stave, [note]);
+}
+
+/* ---------- Название ноты / аккорда ---------- */
+
+function revealNoteName(show) {
+  var nameEl = $('noteName');
+  var subEl = $('noteSub');
+  var t = state.target;
+  if (show && t) {
+    if (t.kind === 'note') {
+      nameEl.textContent = noteRu(t.midi);
+      var oct = OCTAVE_RU[octaveOf(t.midi)] || '';
+      subEl.textContent = oct + ' октава · ' + noteLatin(t.midi);
+    } else {
+      nameEl.textContent = t.name;
+      var latin = t.spelled.map(function (s) {
+        return s.letter.toUpperCase() + (s.acc === 'b' || s.acc === 'bb' ? s.acc.replace(/b/g, '♭') : s.acc.replace(/#/g, '♯'));
+      }).join('–');
+      subEl.textContent = INVERSION_RU[t.inversion] + ' · ' + latin;
+    }
+    nameEl.classList.remove('hidden');
+  } else {
+    nameEl.classList.add('hidden');
+    subEl.textContent = '';
+  }
+}
+function applyNamePolicy() {
+  if (!state.target) { revealNoteName(false); return; }
+  if (settings.showName === 'always') revealNoteName(true);
+  else if (settings.showName === 'on-error' && state.attempts > 0) revealNoteName(true);
+  else revealNoteName(false);
+}
+
+/* ---------- Движок тренировки ---------- */
+
+function randomInt(lo, hi) { return lo + Math.floor(Math.random() * (hi - lo + 1)); }
+
+function pickClef() {
+  return settings.clefMode === 'both'
+    ? (Math.random() < 0.5 ? 'treble' : 'bass')
+    : settings.clefMode;
+}
+
+function generateNoteTarget() {
+  var clef = pickClef();
+  var range = RANGES[clef][settings.rangePreset];
+  var midi;
+  var guard = 0;
+  do {
+    midi = randomInt(range[0], range[1]);
+    guard++;
+  } while (guard < 100 && ((!settings.blackKeys && isBlack(midi)) ||
+           (state.target && state.target.kind === 'note' && midi === state.target.midi)));
+  return { kind: 'note', midi: midi, clef: clef };
+}
+
+// Аккорд: выбранная функция (T/S/D) в тональности, обращение, октава под диапазон
+function generateChordTarget() {
+  var clef = pickClef();
+  var range = RANGES[clef][settings.rangePreset];
+  var key = KEYS[settings.keySig] || KEYS.C;
+  var enabled = Object.keys(DEGREE_INDEX).filter(function (k) { return settings.degrees[k]; });
+  if (!enabled.length) enabled = ['tonic'];
+  var degreeIdx = DEGREE_INDEX[enabled[randomInt(0, enabled.length - 1)]];
+  var rootSpelled = key.degrees[degreeIdx];
+  // в мажоре I/IV/V мажорные; в миноре i/iv минорные, V — мажорная (гармонический минор)
+  var quality = key.type === 'major' || degreeIdx === 4 ? 'major' : 'minor';
+  var letters = buildTriadLetters(rootSpelled, quality);
+
+  var rootPc = spelledPc(letters[0]);
+  var thirdSemi = quality === 'major' ? 4 : 3;
+  // Положения аккорда: все октавы × все обращения, вмещающиеся в диапазон.
+  // Узкое окно «в пределах линееек» может не вмещать основное положение —
+  // тогда берём вмещающееся обращение.
+  var pool = [];
+  for (var oct = 0; oct <= 7; oct++) {
+    var n1 = (oct + 1) * 12 + rootPc;
+    var n2 = n1 + thirdSemi;
+    var n3 = n1 + 7;
+    var shapes = [
+      { midis: [n1, n2, n3], inv: 0 },
+      { midis: [n2, n3, n1 + 12], inv: 1 },
+      { midis: [n3, n1 + 12, n2 + 12], inv: 2 }
+    ];
+    shapes.forEach(function (s) {
+      if (s.midis[0] >= range[0] && s.midis[2] <= range[1]) pool.push(s);
+    });
+  }
+  if (!settings.inversions) {
+    var rootOnly = pool.filter(function (s) { return s.inv === 0; });
+    if (rootOnly.length) pool = rootOnly;
+  }
+  if (!pool.length) {
+    // страховка для совсем узких окон: средняя октава основным положением
+    var base = 4 * 12 + rootPc;
+    pool = [{ midis: [base, base + thirdSemi, base + 7], inv: 0 }];
+  }
+  // не повторять то же положение того же аккорда подряд
+  var prevIsSameChord = state.target && state.target.kind === 'chord' &&
+    state.target.name === chordNameRu(rootSpelled, quality);
+  if (prevIsSameChord && pool.length > 1) {
+    var prevNotes = state.target.notes.join();
+    var other = pool.filter(function (s) { return s.midis.join() !== prevNotes; });
+    if (other.length) pool = other;
+  }
+  var chosen = pool[randomInt(0, pool.length - 1)];
+  var inversion = chosen.inv;
+
+  // Порядок букв при обращении: терция-квинта-корень или квинта-корень-терция
+  var midis = chosen.midis;
+  var letterOrder = [[0, 1, 2], [1, 2, 0], [2, 0, 1]][inversion];
+  var spelled = letterOrder.map(function (li, i) {
+    var p = parseSpelled(letters[li]);
+    return { letter: p.letter, acc: p.acc, octave: Math.floor(midis[i] / 12) - 1 };
+  });
+  return {
+    kind: 'chord', clef: clef,
+    notes: midis,
+    spelled: spelled,
+    name: chordNameRu(rootSpelled, quality),
+    inversion: inversion
+  };
+}
+
+function generateTarget() {
+  state.target = settings.mode === 'chords' ? generateChordTarget() : generateNoteTarget();
+  state.attempts = 0;
+  state.shownAt = performance.now();
+  renderTarget(null);
+  applyNamePolicy();
+  clearHintPulse();
+  scrollKbToTarget();
+}
+
+function nextNote() {
+  state.locked = false;
+  if (state.running) generateTarget();
+}
+
+// Зажатые в данный момент ноты (для блокового зачёта аккордов)
+var heldNotes = new Set();
+
+function handleNoteOn(midi, velocity) {
+  heldNotes.add(midi);
+  pressKeyVisual(midi);
+  if (settings.soundOn) playTone(midi);
+  if (!state.running || !state.target || state.locked) return;
+
+  var t = state.target;
+  if (t.kind === 'chord') {
+    if (t.notes.indexOf(midi) === -1) { registerWrong(midi); return; }
+    // Зачёт блоком: все три ноты аккорда зажаты одновременно
+    var complete = t.notes.every(function (n) { return heldNotes.has(n); });
+    if (!complete) return; // блок ещё собирается — ошибки нет
+    registerCorrect(t.notes);
+  } else if (midi === t.midi) {
+    registerCorrect([midi]);
+  } else {
+    registerWrong(midi);
+  }
+}
+
+function registerCorrect(midis) {
+  state.locked = true;
+  renderTarget('#34d399');
+  flashStage('good');
+  midis.forEach(function (m) { markKey(m, 'correct'); });
+  var rt = performance.now() - state.shownAt;
+  state.stats.correct++;
+  state.stats.streak++;
+  state.stats.reactionSum += rt;
+  state.stats.reactionCount++;
+  if (state.stats.streak > bestStreak) {
+    bestStreak = state.stats.streak;
+    saveBest();
+  }
+  updateStats();
+  setTimeout(nextNote, 500);
+}
+
+function registerWrong(midi) {
+  state.attempts++;
+  state.stats.wrong++;
+  state.stats.streak = 0;
+  markKey(midi, 'wrong');
+  flashStage('bad');
+  applyNamePolicy();
+  if (state.attempts >= 3) hintPulse();
+  updateStats();
+}
+
+function handleNoteOff(midi) {
+  heldNotes.delete(midi);
+  releaseKeyVisual(midi);
+}
+
+function flashStage(kind) {
+  var stage = $('stage');
+  stage.classList.remove('good', 'bad');
+  // форсируем перезапуск анимации shake
+  void stage.offsetWidth;
+  stage.classList.add(kind);
+  setTimeout(function () { stage.classList.remove(kind); }, 500);
+}
+
+/* ---------- Статистика ---------- */
+
+function updateStats() {
+  var s = state.stats;
+  $('statCorrect').textContent = s.correct;
+  $('statWrong').textContent = s.wrong;
+  var total = s.correct + s.wrong;
+  $('statAccuracy').textContent = total ? Math.round((s.correct / total) * 100) + '%' : '—';
+  $('statStreak').textContent = s.streak;
+  $('statBest').textContent = Math.max(bestStreak, s.streak);
+  $('statReaction').textContent = s.reactionCount
+    ? (s.reactionSum / s.reactionCount / 1000).toFixed(1) + ' с'
+    : '—';
+}
+
+var timerHandle = null;
+function startTimer() {
+  state.sessionStart = Date.now();
+  clearInterval(timerHandle);
+  timerHandle = setInterval(function () {
+    var sec = Math.floor((Date.now() - state.sessionStart) / 1000);
+    var m = Math.floor(sec / 60);
+    var s = sec % 60;
+    $('statTime').textContent = m + ':' + (s < 10 ? '0' : '') + s;
+  }, 500);
+}
+function stopTimer() { clearInterval(timerHandle); }
+
+/* ---------- Сессия ---------- */
+
+/* Экран телефона не должен гаснуть, пока идёт сессия: пользователь играет
+   на пианино и не касается экрана. */
+function requestWakeLock() {
+  if (!('wakeLock' in navigator) || wakeLock) return;
+  navigator.wakeLock.request('screen').then(function (lock) {
+    wakeLock = lock;
+    lock.addEventListener('release', function () { wakeLock = null; });
+  }).catch(function () { /* не критично */ });
+}
+function releaseWakeLock() {
+  if (!wakeLock) return;
+  try { wakeLock.release(); } catch (e) {}
+  wakeLock = null;
+}
+document.addEventListener('visibilitychange', function () {
+  // wakeLock снимается при скрытии страницы — вернём его по возвращению
+  if (document.visibilityState === 'visible' && state.running) requestWakeLock();
+});
+
+function startSession() {
+  state.running = true;
+  state.locked = false;
+  state.stats = { correct: 0, wrong: 0, streak: 0, reactionSum: 0, reactionCount: 0 };
+  $('statTime').textContent = '0:00';
+  updateStats();
+  $('idleOverlay').classList.add('hidden');
+  var btn = $('startBtn');
+  btn.textContent = 'Стоп';
+  btn.classList.add('stop');
+  $('hintBtn').disabled = false;
+  initMidi();
+  requestWakeLock();
+  startTimer();
+  generateTarget();
+}
+
+function stopSession() {
+  state.running = false;
+  state.locked = false;
+  state.target = null;
+  stopTimer();
+  releaseWakeLock();
+  $('idleOverlay').classList.remove('hidden');
+  $('idleOverlay').textContent = 'Сессия остановлена — итоги в статистике';
+  var btn = $('startBtn');
+  btn.textContent = 'Начать';
+  btn.classList.remove('stop');
+  $('hintBtn').disabled = true;
+  renderTarget(null);
+  revealNoteName(false);
+  clearHintPulse();
+}
+
+/* ---------- Подсказка ---------- */
+
+function hintPulse() {
+  if (!state.target) return;
+  var midis = state.target.kind === 'chord' ? state.target.notes : [state.target.midi];
+  midis.forEach(function (m) {
+    var key = keyElement(m);
+    if (key) key.classList.add('hint');
+  });
+}
+function clearHintPulse() {
+  var keys = document.querySelectorAll('.kb .hint');
+  for (var i = 0; i < keys.length; i++) keys[i].classList.remove('hint');
+}
+
+/* ---------- Виртуальная клавиатура ---------- */
+
+function keyElement(midi) {
+  return document.querySelector('.kb .key[data-midi="' + midi + '"]');
+}
+
+/* Автопрокрутка: когда клавиатура шире карточки (широкие диапазоны,
+   ноты на добавочных линейках), показываем октаву текущей цели —
+   целевая клавиша (или блок аккорда) в центре кадра. */
+function scrollKbToTarget() {
+  var card = document.querySelector('.kb-card');
+  var t = state.target;
+  if (!card || !t) return;
+  if (card.scrollWidth <= card.clientWidth + 1) { card.scrollLeft = 0; return; }
+  var midis = t.kind === 'chord' ? t.notes : [t.midi];
+  var first = keyElement(Math.min.apply(null, midis));
+  var last = keyElement(Math.max.apply(null, midis));
+  if (!first || !last) return;
+  var cardLeft = card.getBoundingClientRect().left;
+  var a = first.getBoundingClientRect().left;
+  var b = last.getBoundingClientRect().right;
+  var center = (a + b) / 2 - cardLeft + card.scrollLeft;
+  var dest = Math.max(0, Math.min(center - card.clientWidth / 2,
+                                  card.scrollWidth - card.clientWidth));
+  card.scrollTo({ left: dest, behavior: 'smooth' });
+}
+
+/* Если клавиатура физически помещается в карточку — запрещаем браузеру
+   перехватывать жест в прокрутку (touch-action: none): дрожь пальца
+   при наборе аккорда не должна ронять ноту через pointercancel.
+   Шире карточки — возвращаем горизонтальное панорамирование. */
+function updateKbTouchAction() {
+  var kb = $('keyboard');
+  var card = kb && kb.closest('.kb-card');
+  if (!kb || !card) return;
+  // скролл живёт на карточке (.kb-card, overflow-x: auto), а не на самой
+  // полосе — полоса всегда «шире себя», сравнивать надо карточку
+  kb.style.touchAction = card.scrollWidth > card.clientWidth + 1 ? 'pan-x' : 'none';
+}
+
+function buildKeyboard() {
+  var kb = $('keyboard');
+  kb.innerHTML = '';
+  var range = keyboardRange();
+  var whites = [];
+  var blacks = [];
+  for (var midi = range[0]; midi <= range[1]; midi++) {
+    (isBlack(midi) ? blacks : whites).push(midi);
+  }
+  var total = whites.length;
+  var whiteIndex = 0;
+  var blacksPlaced = 0;
+  var beforeThisWhite = 0; // сколько белых уже создано перед текущей
+  var blackQueue = {};     // whiteIndex → массив чёрных после него
+  // Чёрная клавиша стоит после своей нижележащей белой (C# после C и т.д.)
+  for (var i = 0; i < blacks.length; i++) {
+    var bm = blacks[i];
+    var leftWhite = bm - 1;
+    blackQueue[leftWhite - range[0]] = blackQueue[leftWhite - range[0]] || [];
+    blackQueue[leftWhite - range[0]].push(bm);
+  }
+  var w = 100 / total;
+  // --whites управляет шириной .kb из CSS: клавиша 26–64px, по центру
+  kb.style.setProperty('--whites', String(total));
+  whites.forEach(function (midi, idx) {
+    var el = document.createElement('div');
+    el.className = 'key w';
+    el.dataset.midi = midi;
+    el.style.left = (idx * w) + '%';
+    el.style.width = w + '%';
+    if (midi % 12 === 0) {
+      var label = document.createElement('span');
+      label.textContent = 'C' + octaveOf(midi);
+      el.appendChild(label);
+    }
+    kb.appendChild(el);
+    var queue = blackQueue[midi - range[0]];
+    if (queue) {
+      queue.forEach(function (bm) {
+        blacksPlaced++;
+        var bk = document.createElement('div');
+        bk.className = 'key b';
+        bk.dataset.midi = bm;
+        bk.style.left = ((idx + 1) * w - w * 0.31) + '%';
+        bk.style.width = (w * 0.62) + '%';
+        kb.appendChild(bk);
+      });
+    }
+  });
+  updateKbTouchAction();
+  // rebuild стирает подсветку — вернём пульсацию подсказки, если она была
+  if (state.running && state.attempts >= 3) hintPulse();
+  scrollKbToTarget();
+}
+
+function pressKeyVisual(midi) {
+  var key = keyElement(midi);
+  if (key) key.classList.add('on');
+}
+function releaseKeyVisual(midi) {
+  var key = keyElement(midi);
+  if (key) {
+    key.classList.remove('on');
+    key.classList.remove('correct', 'wrong');
+  }
+}
+function markKey(midi, kind) {
+  var key = keyElement(midi);
+  if (key) {
+    key.classList.remove('on');
+    key.classList.add(kind);
+    setTimeout(function () { key.classList.remove(kind); }, 600);
+  }
+}
+
+/* ---------- Звук (Web Audio) ---------- */
+
+function playTone(midi) {
+  try {
+    ensureAudio();
+    var t = audioCtx.currentTime;
+    var freq = 440 * Math.pow(2, (midi - 69) / 12);
+    var osc = audioCtx.createOscillator();
+    var gain = audioCtx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.22, t + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.9);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(t);
+    osc.stop(t + 1);
+  } catch (e) { /* звук — необязательная опция */ }
+}
+
+/* Создаёт/возобновляет AudioContext — вызывать из пользовательского жеста,
+   иначе на телефонах политика автозапуска оставит звук выключенным. */
+function ensureAudio() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  } catch (e) { /* звук — необязательная опция */ }
+}
+
+/* ---------- Web MIDI ---------- */
+
+function setMidiStatus(kind, title) {
+  var dot = $('midiDot');
+  dot.className = 'dot ' + kind;
+  if (title) dot.title = title;
+  $('midiStatus').textContent = kind === 'ok' ? '' : (title || '');
+}
+
+var midiRequestPending = false;
+
+function initMidi() {
+  if (midiAccess || midiRequestPending) return;
+  if (!window.isSecureContext) {
+    setMidiStatus('err', 'Web MIDI: нужен localhost или https — играйте на экранных клавишах');
+    return;
+  }
+  if (!navigator.requestMIDIAccess) {
+    var ios = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    setMidiStatus('err', ios ? 'iOS (Safari) не поддерживает Web MIDI'
+                             : 'Браузер не поддерживает Web MIDI — откройте страницу в Chrome');
+    return;
+  }
+  midiRequestPending = true;
+  navigator.requestMIDIAccess({ sysex: false }).then(function (access) {
+    midiRequestPending = false;
+    midiAccess = access;
+    access.addEventListener('statechange', refreshMidiInputs);
+    refreshMidiInputs();
+  }, function () {
+    midiRequestPending = false;
+    setMidiStatus('err', 'Доступ к MIDI запрещён — проверьте разрешения сайта');
+  });
+}
+
+function refreshMidiInputs() {
+  var select = $('midiSelect');
+  select.innerHTML = '';
+  var inputs = [];
+  midiAccess.inputs.forEach(function (input) { inputs.push(input); });
+  if (!inputs.length) {
+    var opt = document.createElement('option');
+    opt.textContent = 'MIDI-устройства не найдены';
+    select.appendChild(opt);
+    setMidiStatus('warn', 'Подключите пианино по USB');
+    selectInput(null);
+    return;
+  }
+  var chosenId = localStorage.getItem('pt.midiInput') || '';
+  var chosen = null;
+  inputs.forEach(function (input) {
+    var o = document.createElement('option');
+    o.value = input.id;
+    o.textContent = input.name || input.id;
+    select.appendChild(o);
+    if (input.id === chosenId) chosen = input;
+    if (!chosen && /npk|piano|midi|клав/i.test(input.name || '')) chosen = input;
+  });
+  if (!chosen) chosen = inputs[0];
+  select.value = chosen.id;
+  selectInput(chosen);
+  setMidiStatus('ok', 'MIDI подключён: ' + (chosen.name || chosen.id));
+}
+
+function selectInput(input) {
+  if (selectedInput) selectedInput.onmidimessage = null;
+  selectedInput = input;
+  if (input) {
+    input.onmidimessage = onMidiMessage;
+    try { localStorage.setItem('pt.midiInput', input.id); } catch (e) {}
+  }
+}
+
+function onMidiMessage(event) {
+  var data = event.data;
+  if (!data || data.length < 3) return;
+  var command = data[0] & 0xf0;
+  var note = data[1];
+  var velocity = data[2];
+  if (command === 0x90 && velocity > 0) handleNoteOn(note, velocity);
+  else if (command === 0x80 || (command === 0x90 && velocity === 0)) handleNoteOff(note);
+}
+
+/* ---------- Привязка UI ---------- */
+
+$('startBtn').addEventListener('click', function () {
+  ensureAudio(); // пользовательский жест — разблокируем звук на телефоне
+  if (state.running) stopSession(); else startSession();
+});
+
+$('hintBtn').addEventListener('click', function () {
+  if (!state.target) return;
+  revealNoteName(true);
+  hintPulse();
+});
+
+$('resetBtn').addEventListener('click', function () {
+  state.stats = { correct: 0, wrong: 0, streak: 0, reactionSum: 0, reactionCount: 0 };
+  bestStreak = 0;
+  saveBest();
+  updateStats();
+});
+
+$('midiSelect').addEventListener('change', function () {
+  if (!midiAccess) return;
+  var input = midiAccess.inputs.get(this.value);
+  if (input) {
+    selectInput(input);
+    setMidiStatus('ok', 'MIDI подключён: ' + (input.name || input.id));
+  }
+});
+
+// Экранная клавиатура: мышь и мультитач (Pointer Events).
+// Нота звучит только на тап или удержание — жест промотки полосы
+// (клавиатура шире карточки) молчит: короткая задержка на распознавание
+// жеста, палец ушёл дальше ~11px или браузер перехватил прокрутку — нота
+// не играется. Аккорды блоком: несколько пальцев держатся дольше задержки,
+// каждый палец — свой pointerId, нота звучит до отпускания этого пальца.
+var pointerNotes = {}; // pointerId → { midi, played, dragged, startX, startY, timer }
+var kbEl = $('keyboard');
+kbEl.addEventListener('pointerdown', function (event) {
+  if (event.pointerType === 'mouse' && event.button !== 0) return;
+  var key = event.target.closest('.key');
+  if (!key) return;
+  event.preventDefault();
+  if (settings.soundOn) ensureAudio();
+  var note = {
+    midi: parseInt(key.dataset.midi, 10),
+    played: false, dragged: false,
+    startX: event.clientX, startY: event.clientY,
+    timer: null
+  };
+  pointerNotes[event.pointerId] = note;
+  note.timer = setTimeout(function () { pressPointerNote(event.pointerId); }, 110);
+});
+function pressPointerNote(pointerId) {
+  var note = pointerNotes[pointerId];
+  if (!note || note.played || note.dragged) return;
+  note.played = true;
+  handleNoteOn(note.midi, 90);
+}
+kbEl.addEventListener('pointermove', function (event) {
+  var note = pointerNotes[event.pointerId];
+  if (!note || note.dragged) return;
+  var dx = event.clientX - note.startX, dy = event.clientY - note.startY;
+  if (dx * dx + dy * dy > 121) { // >11px — проматываем, ноту не играем
+    note.dragged = true;
+    clearTimeout(note.timer);
+  }
+});
+function releasePointerNote(event) {
+  var note = pointerNotes[event.pointerId];
+  if (!note) return;
+  delete pointerNotes[event.pointerId];
+  clearTimeout(note.timer);
+  if (note.played) {
+    handleNoteOff(note.midi);
+  } else if (!note.dragged && event.type === 'pointerup') {
+    // быстрый тап короче задержки распознавания — засчитываем нажатием
+    handleNoteOn(note.midi, 90);
+    handleNoteOff(note.midi);
+  }
+  // pointercancel без played — браузер забрал жест на прокрутку: молча
+}
+// up/cancel на window: палец может уйти с клавиатуры или быть перехвачен
+// браузером на прокрутку — зачёт блоком не должен «залипать»
+window.addEventListener('pointerup', releasePointerNote);
+window.addEventListener('pointercancel', releasePointerNote);
+// долгий тап по клавише не должен открывать контекстное меню
+kbEl.addEventListener('contextmenu', function (event) { event.preventDefault(); });
+
+// Настройки
+function bindRadios(name, onChange) {
+  var radios = document.querySelectorAll('input[name="' + name + '"]');
+  radios.forEach(function (r) {
+    r.addEventListener('change', function () {
+      if (r.checked) { settings[name] = r.value; saveSettings(); onChange(); }
+    });
+  });
+  for (var i = 0; i < radios.length; i++) {
+    if (radios[i].value === settings[name]) radios[i].checked = true;
+  }
+}
+function regenIfRunning() {
+  if (!state.running || state.locked) return;
+  generateTarget();
+}
+
+// клавиатуру перестраиваем ПОСЛЕ регенерации цели: keyboardRange() смотрит
+// на свежую цель, иначе диапазон окажется шире нужного
+bindRadios('clefMode', function () { regenIfRunning(); buildKeyboard(); });
+bindRadios('rangePreset', function () { regenIfRunning(); buildKeyboard(); });
+
+$('blackKeys').addEventListener('change', function () {
+  settings.blackKeys = this.checked; saveSettings(); regenIfRunning();
+});
+$('soundOn').addEventListener('change', function () {
+  settings.soundOn = this.checked; saveSettings();
+  if (this.checked) ensureAudio(); // включение звука — тоже жест
+});
+$('showName').addEventListener('change', function () {
+  settings.showName = this.value; saveSettings(); applyNamePolicy();
+});
+$('blackKeys').checked = settings.blackKeys;
+$('soundOn').checked = settings.soundOn;
+$('showName').value = settings.showName;
+
+// Переключатель режима «Ноты / Аккорды»
+var modeSwitch = $('modeSwitch');
+function applyModeUI() {
+  modeSwitch.querySelectorAll('.mode-btn').forEach(function (b) {
+    b.classList.toggle('active', b.dataset.mode === settings.mode);
+  });
+  $('settings').classList.toggle('chord-mode', settings.mode === 'chords');
+}
+modeSwitch.addEventListener('click', function (event) {
+  var btn = event.target.closest('.mode-btn');
+  if (!btn || btn.dataset.mode === settings.mode) return;
+  settings.mode = btn.dataset.mode;
+  saveSettings();
+  applyModeUI();
+  heldNotes.clear();
+  regenIfRunning();
+  buildKeyboard(); // режим аккордов расширяет диапазон клавиатуры
+});
+
+// Тональности для режима аккордов
+(function buildKeyOptions() {
+  var select = $('keySig');
+  var groups = { major: document.createElement('optgroup'), minor: document.createElement('optgroup') };
+  groups.major.label = 'Мажорные';
+  groups.minor.label = 'Минорные';
+  Object.keys(KEYS).forEach(function (k) {
+    var o = document.createElement('option');
+    o.value = k;
+    o.textContent = KEYS[k].name;
+    groups[KEYS[k].type].appendChild(o);
+  });
+  select.appendChild(groups.major);
+  select.appendChild(groups.minor);
+  if (!(settings.keySig in KEYS)) settings.keySig = 'C';
+  select.value = settings.keySig;
+})();
+$('keySig').addEventListener('change', function () {
+  settings.keySig = this.value;
+  saveSettings();
+  regenIfRunning();
+});
+$('inversions').addEventListener('change', function () {
+  settings.inversions = this.checked;
+  saveSettings();
+  regenIfRunning();
+});
+$('inversions').checked = settings.inversions;
+
+// Функции аккордов: тоника / субдоминанта / доминанта в любых комбинациях
+document.querySelectorAll('input[data-degree]').forEach(function (box) {
+  box.checked = !!settings.degrees[box.dataset.degree];
+  box.addEventListener('change', function () {
+    settings.degrees[box.dataset.degree] = box.checked;
+    // хотя бы одна функция должна остаться включённой
+    var anyOn = Object.keys(settings.degrees).some(function (k) { return settings.degrees[k]; });
+    if (!anyOn) {
+      settings.degrees[box.dataset.degree] = true;
+      box.checked = true;
+      return;
+    }
+    saveSettings();
+    regenIfRunning();
+  });
+});
+applyModeUI();
+
+/* ---------- Полный экран ---------- */
+
+/* На телефоне в ландшафте самый ценный ресурс — высота экрана:
+   полный экран прячет системную панель и адресную строку Chrome.
+   Кнопка остаётся скрытой там, где API нет (iPhone/Safari). */
+(function initFullscreenButton() {
+  var btn = $('fsBtn');
+  var root = document.documentElement;
+  var req = root.requestFullscreen || root.webkitRequestFullscreen;
+  var exit = document.exitFullscreen || document.webkitExitFullscreen;
+  if (!req || !exit) return;
+  btn.hidden = false;
+  function fsElement() { return document.fullscreenElement || document.webkitFullscreenElement; }
+  function apply() { btn.textContent = fsElement() ? 'Оконный режим' : 'Во весь экран'; }
+  btn.addEventListener('click', function () {
+    if (fsElement()) {
+      exit.call(document);
+    } else {
+      var p = req.call(root);
+      if (p && p.catch) p.catch(function () { /* отказ браузера — не критично */ });
+    }
+  });
+  document.addEventListener('fullscreenchange', apply);
+  document.addEventListener('webkitfullscreenchange', apply);
+  apply();
+})();
+
+/* ---------- Установка как приложение (PWA) ---------- */
+
+(function initInstallButton() {
+  var btn = $('installBtn');
+  if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return;
+  var deferredPrompt = null;
+  window.addEventListener('beforeinstallprompt', function (event) {
+    event.preventDefault();
+    deferredPrompt = event;
+    btn.hidden = false; // браузер готов установить — показываем кнопку
+  });
+  btn.addEventListener('click', function () {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    deferredPrompt = null;
+    btn.hidden = true;
+  });
+  window.addEventListener('appinstalled', function () { btn.hidden = true; });
+})();
+
+/* ---------- Тестовый API (проверка без пианино) ---------- */
+
+window.__trainer = {
+  state: function () {
+    var t = state.target;
+    return {
+      running: state.running,
+      mode: settings.mode,
+      target: t && t.kind === 'note' ? t.midi : null,
+      clef: t ? t.clef : null,
+      chord: t && t.kind === 'chord' ? { notes: t.notes, name: t.name, inversion: t.inversion } : null,
+      stats: { correct: state.stats.correct, wrong: state.stats.wrong, streak: state.stats.streak }
+    };
+  },
+  press: function (midi) { handleNoteOn(midi, 90); },
+  release: function (midi) { handleNoteOff(midi); },
+  start: startSession,
+  settings: settings
+};
+
+/* ---------- Запуск ---------- */
+
+buildKeyboard();
+// поворот экрана / изменение окна: пересчитать touch-action клавиатуры
+if (window.ResizeObserver) {
+  new ResizeObserver(updateKbTouchAction).observe(document.querySelector('.kb-card'));
+}
+renderTarget(null);
+updateStats();
+initMidi();
+// На Android промпт MIDI-разрешения требует пользовательского жеста —
+// если запрос при загрузке не прошёл, повторим по первому касанию
+document.addEventListener('pointerdown', function () {
+  if (!midiAccess) initMidi();
+}, { once: true });
+
+/* ---------- Service Worker (офлайн-режим PWA) ---------- */
+if ('serviceWorker' in navigator &&
+    (location.protocol === 'https:' ||
+     (location.protocol === 'http:' && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)))) {
+  navigator.serviceWorker.register('sw.js').catch(function () { /* офлайн необязателен */ });
+}</script>
+</body>
+</html>
