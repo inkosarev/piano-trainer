@@ -266,6 +266,7 @@
     border: 1px solid var(--line); border-radius: 8px;
     padding: 5px 8px; font-size: 16px; width: 100%;
   }
+  .settings select:disabled { opacity: .45; cursor: not-allowed; }
   .settings-actions { padding: 10px 0 4px; }
   .settings-actions .btn { padding: 8px 16px; font-size: 14px; }
   footer {
@@ -427,17 +428,19 @@
       </fieldset>
       <fieldset class="chords-only">
         <legend>Тональность</legend>
-        <label>Тональность
-          <select id="keySig"></select>
-        </label>
+        <label><input type="radio" name="keyMode" value="all"> Все (случайная)</label>
+        <label><input type="radio" name="keyMode" value="major"> Мажорные</label>
+        <label><input type="radio" name="keyMode" value="minor"> Минорные</label>
+        <label><input type="radio" name="keyMode" value="one"> Одна (выбрать ниже)</label>
+        <select id="keySig"></select>
       </fieldset>
       <fieldset class="chords-only">
         <legend>Аккорды</legend>
-        <label><input type="checkbox" id="inversions"> С обращениями</label>
+        <label><input type="checkbox" id="inversions"> С обращениями (секстаккорд и квартсекстаккорд)</label>
         <label><input type="checkbox" data-degree="tonic"> Тоника (I)</label>
         <label><input type="checkbox" data-degree="subdominant"> Субдоминанта (IV)</label>
         <label><input type="checkbox" data-degree="dominant"> Доминанта (V)</label>
-        <label>Зачёт блоком — все три ноты зажаты одновременно</label>
+        <label>Зачёт: блоком — все ноты зажаты; без MIDI можно нажимать по очереди</label>
       </fieldset>
       <fieldset>
         <legend>Ноты</legend>
@@ -603,7 +606,7 @@ function chordNameRu(rootSpelled, quality) {
   return base[0].toLowerCase() + base.slice(1) + '-минор';
 }
 
-var INVERSION_RU = ['основное положение', '1-е обращение (секстаккорд)', '2-е обращение (квартсекстаккорд)'];
+var INVERSION_RU = ['тоника', 'секстаккорд', 'квартсекстаккорд'];
 
 function isBlack(midi) { return !!BLACK[midi % 12]; }
 // Диатоническая ступень (C=0…B=6 в каждой октаве) — для расчёта вертикали ноты
@@ -621,7 +624,7 @@ function noteLatin(midi) { return LETTERS[midi % 12] + octaveOf(midi); }
 var DEFAULTS = {
   clefMode: 'treble', rangePreset: 'staff', blackKeys: false,
   showName: 'on-error', soundOn: false,
-  mode: 'notes', keySig: 'C', inversions: false,
+  mode: 'notes', keyMode: 'all', keySig: 'C', inversions: false,
   degrees: { tonic: true, subdominant: true, dominant: true }
 };
 
@@ -791,10 +794,22 @@ function generateNoteTarget() {
 }
 
 // Аккорд: выбранная функция (T/S/D) в тональности, обращение, октава под диапазон
+
+// Тональность для аккордов: «одна» — выбранная, иначе случайная из группы
+function pickKey() {
+  if (settings.keyMode === 'one') return KEYS[settings.keySig] || KEYS.C;
+  var names = Object.keys(KEYS);
+  if (settings.keyMode === 'major' || settings.keyMode === 'minor') {
+    var wanted = settings.keyMode === 'major' ? 'major' : 'minor';
+    names = names.filter(function (k) { return KEYS[k].type === wanted; });
+  }
+  return KEYS[names[randomInt(0, names.length - 1)]];
+}
+
 function generateChordTarget() {
   var clef = pickClef();
   var range = RANGES[clef][settings.rangePreset];
-  var key = KEYS[settings.keySig] || KEYS.C;
+  var key = pickKey();
   var enabled = Object.keys(DEGREE_INDEX).filter(function (k) { return settings.degrees[k]; });
   if (!enabled.length) enabled = ['tonic'];
   var degreeIdx = DEGREE_INDEX[enabled[randomInt(0, enabled.length - 1)]];
@@ -805,24 +820,56 @@ function generateChordTarget() {
 
   var rootPc = spelledPc(letters[0]);
   var thirdSemi = quality === 'major' ? 4 : 3;
+
+  // Формы аккорда (все октавы × 3 обращения), вмещающиеся в окно [lo, hi]
+  function chordShapes(lo, hi) {
+    var out = [];
+    for (var oct = 0; oct <= 7; oct++) {
+      var n1 = (oct + 1) * 12 + rootPc;
+      var n2 = n1 + thirdSemi;
+      var n3 = n1 + 7;
+      [
+        { midis: [n1, n2, n3], inv: 0 },
+        { midis: [n2, n3, n1 + 12], inv: 1 },
+        { midis: [n3, n1 + 12, n2 + 12], inv: 2 }
+      ].forEach(function (s) {
+        if (s.midis[0] >= lo && s.midis[2] <= hi) out.push(s);
+      });
+    }
+    return out;
+  }
+  // Ближайшая к окну пресета форма: минимальный вылет за его границы
+  function closestShape(shapes) {
+    var best = null, bestDist = Infinity;
+    shapes.forEach(function (s) {
+      var d = Math.max(0, range[0] - s.midis[0]) + Math.max(0, s.midis[2] - range[1]);
+      if (d < bestDist) { bestDist = d; best = s; }
+    });
+    return best;
+  }
+
   // Положения аккорда: все октавы × все обращения, вмещающиеся в диапазон.
   // Узкое окно «в пределах линееек» может не вмещать основное положение —
   // тогда берём вмещающееся обращение.
-  var pool = [];
-  for (var oct = 0; oct <= 7; oct++) {
-    var n1 = (oct + 1) * 12 + rootPc;
-    var n2 = n1 + thirdSemi;
-    var n3 = n1 + 7;
-    var shapes = [
-      { midis: [n1, n2, n3], inv: 0 },
-      { midis: [n2, n3, n1 + 12], inv: 1 },
-      { midis: [n3, n1 + 12, n2 + 12], inv: 2 }
-    ];
-    shapes.forEach(function (s) {
-      if (s.midis[0] >= range[0] && s.midis[2] <= range[1]) pool.push(s);
+  var pool = chordShapes(range[0], range[1]);
+  if (settings.inversions) {
+    // «С обращениями» = и секстаккорд, и квартсекстаккорд должны быть доступны:
+    // если какое-то из трёх положений не влезло в узкое окно (например,
+    // квартсекстаккорд в «в пределах линеечек»), добираем ближайшую форму
+    // из более широкого окна того же ключа — иначе в пуле остаётся
+    // единственное положение и настройка не ощущается.
+    [0, 1, 2].forEach(function (inv) {
+      var present = pool.some(function (s) { return s.inv === inv; });
+      if (present) return;
+      ['ledger', 'wide'].some(function (preset) {
+        var w = RANGES[clef][preset];
+        if (w[0] === range[0] && w[1] === range[1]) return false;
+        var best = closestShape(chordShapes(w[0], w[1]).filter(function (s) { return s.inv === inv; }));
+        if (best) { pool.push(best); return true; }
+        return false;
+      });
     });
-  }
-  if (!settings.inversions) {
+  } else {
     var rootOnly = pool.filter(function (s) { return s.inv === 0; });
     if (rootOnly.length) pool = rootOnly;
   }
@@ -862,6 +909,7 @@ function generateTarget() {
   state.target = settings.mode === 'chords' ? generateChordTarget() : generateNoteTarget();
   state.attempts = 0;
   state.shownAt = performance.now();
+  chordProgress.clear();
   renderTarget(null);
   applyNamePolicy();
   clearHintPulse();
@@ -875,6 +923,10 @@ function nextNote() {
 
 // Зажатые в данный момент ноты (для блокового зачёта аккордов)
 var heldNotes = new Set();
+// Набранные по очереди ноты аккорда — только когда MIDI-клавиатура не
+// подключена: тап по экранной клавише мгновенно отпускает ноту, блок
+// «зажаты одновременно» собрать нечем
+var chordProgress = new Set();
 
 function handleNoteOn(midi, velocity) {
   heldNotes.add(midi);
@@ -887,8 +939,14 @@ function handleNoteOn(midi, velocity) {
     if (t.notes.indexOf(midi) === -1) { registerWrong(midi); return; }
     // Зачёт блоком: все три ноты аккорда зажаты одновременно
     var complete = t.notes.every(function (n) { return heldNotes.has(n); });
-    if (!complete) return; // блок ещё собирается — ошибки нет
-    registerCorrect(t.notes);
+    if (complete) { registerCorrect(t.notes); return; }
+    // Без MIDI (играем по экранным клавишам) зачитываем и набор по очереди:
+    // каждая нота аккорда, нажатая хотя бы раз с показа этого аккорда
+    if (!selectedInput) {
+      chordProgress.add(midi);
+      var allPressed = t.notes.every(function (n) { return chordProgress.has(n); });
+      if (allPressed) registerCorrect(t.notes);
+    }
   } else if (midi === t.midi) {
     registerCorrect([midi]);
   } else {
@@ -1080,6 +1138,12 @@ function updateKbTouchAction() {
 function buildKeyboard() {
   var kb = $('keyboard');
   kb.innerHTML = '';
+  // rebuild стирает классы клавиш — отложенные снятия подсветки не должны
+  // срабатывать на новых элементах
+  Object.keys(releaseTimers).forEach(function (m) {
+    clearTimeout(releaseTimers[m]); delete releaseTimers[m];
+  });
+  pressAt = {};
   var range = keyboardRange();
   var whites = [];
   var blacks = [];
@@ -1132,16 +1196,38 @@ function buildKeyboard() {
   scrollKbToTarget();
 }
 
+// Подсветка нажатия: быстрый тап должен быть виден глазу — клавиша горит
+// минимум PRESS_MIN_MS, даже если нота отпущена мгновенно (тап по экранной
+// клавише — это on+off в одном тике, без задержки подсветка не отрисовалась бы).
+var PRESS_MIN_MS = 200;
+var pressAt = {};       // midi → performance.now() нажатия
+var releaseTimers = {}; // midi → таймер отложенного снятия подсветки
+
 function pressKeyVisual(midi) {
   var key = keyElement(midi);
-  if (key) key.classList.add('on');
+  if (!key) return;
+  if (releaseTimers[midi]) { clearTimeout(releaseTimers[midi]); delete releaseTimers[midi]; }
+  key.classList.add('on');
+  pressAt[midi] = performance.now();
 }
 function releaseKeyVisual(midi) {
   var key = keyElement(midi);
-  if (key) {
+  if (!key) return;
+  // метки зачёта (.correct/.wrong) не трогаем — у markKey свой таймер;
+  // мгновенное снятие здесь стирало зелёную метку быстрее, чем её видно
+  var heldMs = performance.now() - (pressAt[midi] || 0);
+  delete pressAt[midi];
+  var wait = Math.max(0, PRESS_MIN_MS - heldMs);
+  if (releaseTimers[midi]) clearTimeout(releaseTimers[midi]);
+  if (wait <= 0) {
     key.classList.remove('on');
-    key.classList.remove('correct', 'wrong');
+    return;
   }
+  releaseTimers[midi] = setTimeout(function () {
+    delete releaseTimers[midi];
+    var k = keyElement(midi);
+    if (k) k.classList.remove('on');
+  }, wait);
 }
 function markKey(midi, kind) {
   var key = keyElement(midi);
@@ -1404,6 +1490,7 @@ modeSwitch.addEventListener('click', function (event) {
   saveSettings();
   applyModeUI();
   heldNotes.clear();
+  chordProgress.clear();
   regenIfRunning();
   buildKeyboard(); // режим аккордов расширяет диапазон клавиатуры
 });
@@ -1425,6 +1512,13 @@ modeSwitch.addEventListener('click', function (event) {
   if (!(settings.keySig in KEYS)) settings.keySig = 'C';
   select.value = settings.keySig;
 })();
+// селект конкретной тональности активен только при «Одна»
+function updateKeySigState() {
+  $('keySig').disabled = settings.keyMode !== 'one';
+}
+if (['all', 'major', 'minor', 'one'].indexOf(settings.keyMode) < 0) settings.keyMode = 'all';
+bindRadios('keyMode', function () { updateKeySigState(); regenIfRunning(); });
+updateKeySigState();
 $('keySig').addEventListener('change', function () {
   settings.keySig = this.value;
   saveSettings();

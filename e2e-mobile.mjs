@@ -140,12 +140,21 @@ try {
     const [pt] = await keyPoints(page, [target]);
     assert.ok(pt, 'нет клавиши для ноты ' + target);
     await page.touchscreen.tap(pt.x, pt.y);
-    await page.waitForTimeout(200);
+    await page.waitForTimeout(150);
+    // подсветка нажатия/зачёта обязана дожить до отрисовки (быстрый тап — тоже)
+    const rightAfter = await page.evaluate(() => ({
+      on: document.querySelectorAll('.kb .on').length,
+      correct: document.querySelectorAll('.kb .correct').length,
+      wrong: document.querySelectorAll('.kb .wrong').length
+    }));
     const stats = await page.evaluate(() => __trainer.state().stats);
-    const stuck = await page.evaluate(() => document.querySelectorAll('.kb .on').length);
     await page.tap('#startBtn'); // стоп — до проверок, чтобы не оставить сессию висеть
     assert.equal(stats.correct, 1, JSON.stringify(stats));
-    // тап уже «отпущен» — подсветка не залипла
+    assert.ok(rightAfter.on + rightAfter.correct + rightAfter.wrong >= 1,
+      'после тапа нет видимой подсветки клавиши: ' + JSON.stringify(rightAfter));
+    await page.waitForTimeout(650); // дольше минимальной подсветки (200мс) и метки зачёта (600мс)
+    const stuck = await page.evaluate(() =>
+      document.querySelectorAll('.kb .on, .kb .correct, .kb .wrong').length);
     assert.equal(stuck, 0, 'клавиша осталась подсвеченной после тапа');
   });
 
@@ -170,6 +179,25 @@ try {
     const stats = await page.evaluate(() => __trainer.state().stats);
     assert.equal(stats.correct, 1, JSON.stringify(stats));
     assert.equal(await page.evaluate(() => document.querySelectorAll('.kb .on').length), 0);
+  });
+
+  await test('аккорд без MIDI набирается тапами по очереди', async () => {
+    if (await page.evaluate(() => __trainer.state().running)) await page.tap('#startBtn');
+    await page.tap('#startBtn');
+    await page.waitForTimeout(500); // ждём автопрокрутку клавиатуры к аккорду
+    const chord = await page.evaluate(() => __trainer.state().chord);
+    assert.ok(chord, 'аккорд не сгенерирован');
+    const pts = await keyPoints(page, chord.notes);
+    assert.ok(pts.every(Boolean), 'не все клавиши аккорда найдены: ' + JSON.stringify(chord.notes));
+    // тапаем ноты аккорда по одной — зачёт без MIDI должен принимать набор по очереди
+    for (const p of pts) {
+      await page.touchscreen.tap(p.x, p.y);
+      await page.waitForTimeout(80);
+    }
+    await page.waitForTimeout(100);
+    const stats = await page.evaluate(() => __trainer.state().stats);
+    assert.equal(stats.correct, 1, 'аккорд тапами по очереди не зачтён: ' + JSON.stringify(stats));
+    await page.tap('#startBtn'); // стоп
   });
 
   await test('ландшафт: две колонки, стан по центру, статистика в одну строку', async () => {
